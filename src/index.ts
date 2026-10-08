@@ -331,9 +331,10 @@ stat
 
   // Enhanced OpenLane with better error handling and environment detection
   async runOpenlane(
-    verilogCode: string, 
-    designName: string, 
-    clockPort = "clk", 
+    verilogFiles: { filename: string; content: string }[],
+    designName: string,
+    topModule = designName,
+    clockPort = "clk",
     clockPeriod = 10.0,
     openInKlayout = true
   ): Promise<string> {
@@ -341,21 +342,22 @@ stat
       const projectId = Math.random().toString(36).substring(2, 15);
       const projectName = `${designName}_${projectId}`;
       const projectDir = join(this.openlaneDir, projectName);
-      
+
       // Store project info
       this.projects.set(projectId, { dir: projectDir, type: "openlane" });
 
       // Create project directory
       await fs.mkdir(projectDir, { recursive: true });
 
-      // Write Verilog file
-      const verilogFile = join(projectDir, `${designName}.v`);
-      await fs.writeFile(verilogFile, verilogCode);
+      // Write all Verilog source files
+      for (const f of verilogFiles) {
+        await fs.writeFile(join(projectDir, f.filename), f.content);
+      }
 
       // Create OpenLane config
       const configContent = {
-        DESIGN_NAME: designName,
-        VERILOG_FILES: [`${designName}.v`],
+        DESIGN_NAME: topModule,
+        VERILOG_FILES: verilogFiles.map(f => f.filename),
         CLOCK_PORT: clockPort,
         CLOCK_PERIOD: clockPeriod,
         // Additional OpenLane settings for better results
@@ -785,27 +787,49 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "run_openlane",
-        description: "Run complete ASIC design flow using OpenLane (RTL to GDSII). This process can take up to 10 minutes.",
+        description: "Run complete ASIC design flow using OpenLane (RTL to GDSII). This process can take up to 10 minutes. For multi-file designs, pass 'verilog_files' instead of 'verilog_code'.",
         inputSchema: {
           type: "object",
           properties: {
-            verilog_code: { 
-              type: "string", 
-              description: "The Verilog RTL code for ASIC implementation" 
+            verilog_code: {
+              type: "string",
+              description: "The Verilog RTL code for ASIC implementation. Use this ONLY for single-file designs; for designs made of several .v files, use 'verilog_files' instead."
             },
-            design_name: { 
-              type: "string", 
-              description: "Name of the design (will be used for module and files)" 
+            verilog_files: {
+              type: "array",
+              description: "Multiple Verilog source files for the design (e.g. a core plus its submodules). Each entry is one file. Use this instead of 'verilog_code' when the design spans more than one .v file.",
+              items: {
+                type: "object",
+                properties: {
+                  filename: {
+                    type: "string",
+                    description: "File name, e.g. 'serv_top.v'. A bare name (no directory separators)."
+                  },
+                  content: {
+                    type: "string",
+                    description: "Full contents of this Verilog file."
+                  },
+                },
+                required: ["filename", "content"],
+              },
             },
-            clock_port: { 
-              type: "string", 
-              description: "Name of the clock port", 
-              default: "clk" 
+            top_module: {
+              type: "string",
+              description: "Name of the top-level module to build. Required when using 'verilog_files' if it differs from 'design_name'. Defaults to 'design_name'."
             },
-            clock_period: { 
-              type: "number", 
-              description: "Clock period in nanoseconds", 
-              default: 10.0 
+            design_name: {
+              type: "string",
+              description: "Name of the design (used for the project directory and, unless top_module is given, the top module name)"
+            },
+            clock_port: {
+              type: "string",
+              description: "Name of the clock port",
+              default: "clk"
+            },
+            clock_period: {
+              type: "number",
+              description: "Clock period in nanoseconds",
+              default: 10.0
             },
             open_in_klayout: {
               type: "boolean",
@@ -813,7 +837,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               default: true
             },
           },
-          required: ["verilog_code", "design_name"],
+          required: ["design_name"],
         },
       },
       {
@@ -900,16 +924,41 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
       case "run_openlane": {
-        const verilogCode = validateRequiredString(args, "verilog_code", name);
         const designName = validateRequiredString(args, "design_name", name);
         const clockPort = getStringProperty(args, "clock_port", "clk");
         const clockPeriod = getNumberProperty(args, "clock_period", 10.0);
         const openInKlayout = args && args.open_in_klayout !== false; // Default true
-        
+        const topModule = getStringProperty(args, "top_module", "") || designName;
+
+        // Accept either a single verilog_code string or a verilog_files array.
+        const rawFiles = args && Array.isArray((args as any).verilog_files)
+          ? (args as any).verilog_files
+          : null;
+
+        let verilogFiles: { filename: string; content: string }[];
+
+        if (rawFiles) {
+          verilogFiles = rawFiles.map((f: any, i: number) => {
+            if (!f || typeof f.content !== "string" || !f.content) {
+              throw new McpError(
+                ErrorCode.InvalidParams,
+                `verilog_files[${i}] is missing required 'content' for tool '${name}'`
+              );
+            }
+            const filename = typeof f.filename === "string" && f.filename
+              ? basename(f.filename)
+              : `${designName}_${i}.v`;
+            return { filename, content: f.content };
+          });
+        } else {
+          const verilogCode = validateRequiredString(args, "verilog_code", name);
+          verilogFiles = [{ filename: `${designName}.v`, content: verilogCode }];
+        }
+
         return {
           content: [{
             type: "text",
-            text: await edaServer.runOpenlane(verilogCode, designName, clockPort, clockPeriod, openInKlayout),
+            text: await edaServer.runOpenlane(verilogFiles, designName, topModule, clockPort, clockPeriod, openInKlayout),
           }],
         };
       }
