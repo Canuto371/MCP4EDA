@@ -374,27 +374,20 @@ stat
       const configFile = join(projectDir, "config.json");
       await fs.writeFile(configFile, JSON.stringify(configContent, null, 2));
 
-      // Find Python command
-      let pythonCmd = "python3";
-      const pythonCandidates = [
-        "python3",
-        "python"
-      ];
-      
-      for (const candidate of pythonCandidates) {
-        if (await commandExists(candidate)) {
-          pythonCmd = candidate;
-          break;
-        }
-      }
+      // LibreLane lives in a nix-shell environment, e.g.:
+      //   cd ~/librelane && nix-shell
+      //   librelane config.json
+      // We reproduce that non-interactively with `nix-shell --run`, using an
+      // absolute path to the project's config.json so it resolves regardless
+      // of nix-shell's cwd (~/librelane).
+      const librelaneDir = join(homedir(), "librelane");
 
-      // Run the OpenLane command using Docker MCP approach
-      console.error(`Starting OpenLane flow for ${designName}...`);
+      console.error(`Starting LibreLane flow for ${designName}...`);
       console.error(`Working directory: ${projectDir}`);
       console.error(`This may take up to 10 minutes...`);
 
-      const openlaneCmd = `${pythonCmd} -m openlane --dockerized config.json`;
-      console.error(`Executing: ${openlaneCmd}`);
+      const librelaneCmd = `nix-shell --run "librelane '${configFile}'"`;
+      console.error(`Executing (in ${librelaneDir}): ${librelaneCmd}`);
 
       // Create a wrapper script to handle TTY issues
       const wrapperScript = `#!/bin/bash
@@ -405,25 +398,26 @@ export DEBIAN_FRONTEND=noninteractive
 export CI=true
 export TERM=dumb
 
-# Change to project directory
-cd "${projectDir}"
+# nix-shell is invoked from the LibreLane checkout; the config path is
+# absolute so LibreLane finds it regardless of this cwd.
+cd "${librelaneDir}"
 
-# Run OpenLane with script command to simulate TTY
-script -q /dev/null ${pythonCmd} -m openlane --dockerized config.json
+# Run LibreLane with script command to simulate TTY
+script -q /dev/null nix-shell --run "librelane '${configFile}'"
 `;
 
-      const wrapperPath = join(projectDir, 'run_openlane.sh');
+      const wrapperPath = join(projectDir, 'run_librelane.sh');
       await fs.writeFile(wrapperPath, wrapperScript);
       await execAsyncWithTimeout(`chmod +x "${wrapperPath}"`, {});
 
-      // Run the OpenLane command using the wrapper script
-      console.error(`Starting OpenLane flow for ${designName}...`);
-      console.error(`Working directory: ${projectDir}`);
+      // Run the LibreLane command using the wrapper script
+      console.error(`Starting LibreLane flow for ${designName}...`);
+      console.error(`Working directory: ${librelaneDir}`);
       console.error(`This may take up to 10 minutes...`);
       console.error(`Using wrapper script to handle TTY`);
 
       const { stdout, stderr } = await execAsyncWithTimeout(`"${wrapperPath}"`, {
-        cwd: projectDir,
+        cwd: librelaneDir,
         env: {
           ...process.env,
           PATH: process.env.PATH + ":/usr/local/bin:/opt/homebrew/bin"
@@ -487,21 +481,21 @@ script -q /dev/null ${pythonCmd} -m openlane --dockerized config.json
         gds_file: gdsFile ? basename(gdsFile) : "Not generated",
         gds_path: gdsFile,
         klayout_status: klayoutResult,
-        command_used: openlaneCmd,
+        command_used: librelaneCmd,
         stdout: stdout.length > 2000 ? stdout.substring(0, 2000) + "...(truncated)" : stdout,
         stderr: stderr.length > 2000 ? stderr.substring(0, 2000) + "...(truncated)" : stderr,
-        note: "OpenLane flow completed. Check the runs directory for detailed results."
+        note: "LibreLane flow completed. Check the runs directory for detailed results."
       }, null, 2);
 
     } catch (error: any) {
       // Simple error reporting
       const errorMessage = error.message || String(error);
-      console.error(`OpenLane error: ${errorMessage}`);
-      
+      console.error(`LibreLane error: ${errorMessage}`);
+
       return JSON.stringify({
         success: false,
         error: errorMessage,
-        note: "OpenLane flow failed. Make sure Docker is running and try: docker pull efabless/openlane:latest"
+        note: "LibreLane flow failed. Make sure ~/librelane has a working nix-shell (run 'cd ~/librelane && nix-shell' manually once to confirm) and that 'librelane' is on PATH inside it."
       }, null, 2);
     }
   }
