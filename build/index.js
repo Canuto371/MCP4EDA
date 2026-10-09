@@ -345,8 +345,10 @@ export TERM=dumb
 # absolute so LibreLane finds it regardless of this cwd.
 cd "${librelaneDir}"
 
-# Run LibreLane with script command to simulate TTY
-script -q /dev/null nix-shell --run "librelane '${configFile}'"
+# Run LibreLane with script command to simulate TTY.
+# 'script' needs its command passed via -c as a single string (not as
+# trailing argv), otherwise it tries to parse "--run" as its own flag.
+script -qc "nix-shell --run \\"librelane '${configFile}'\\"" /dev/null
 `;
             const wrapperPath = join(projectDir, 'run_librelane.sh');
             await fs.writeFile(wrapperPath, wrapperScript);
