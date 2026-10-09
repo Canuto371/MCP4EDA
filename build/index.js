@@ -35,13 +35,34 @@ function validateRequiredString(obj, key, toolName) {
 async function execAsyncWithTimeout(command, options = {}, timeoutMs = 600000) {
     return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
-            childProcess.kill('SIGKILL');
+            // Killing childProcess alone only kills the shell exec() spawned —
+            // tools like 'script'/nix-shell/librelane fork their own child tree,
+            // which survives that and keeps running unsupervised in the
+            // background (confirmed: a run we reported as "timed out" actually
+            // finished 12 minutes later, untracked). With detached:true below,
+            // childProcess is its own process-group leader, so killing the
+            // *group* (negative pid) reaches the whole tree.
+            try {
+                if (typeof childProcess.pid === 'number') {
+                    process.kill(-childProcess.pid, 'SIGKILL');
+                }
+                else {
+                    childProcess.kill('SIGKILL');
+                }
+            }
+            catch {
+                childProcess.kill('SIGKILL');
+            }
             reject(new Error(`Command timed out after ${timeoutMs}ms: ${command}`));
         }, timeoutMs);
-        // Ensure encoding is set to get string output and increase buffer size
+        // Ensure encoding is set to get string output and increase buffer size.
+        // detached: true makes childProcess its own process-group leader (see
+        // the timeout handler above) so a timeout can actually kill everything
+        // it spawned, not just the top shell.
         const execOptions = {
             encoding: 'utf8',
             maxBuffer: 10 * 1024 * 1024, // 10MB default buffer
+            detached: true,
             ...options
         };
         const childProcess = exec(command, execOptions, (error, stdout, stderr) => {
@@ -338,7 +359,7 @@ stat
             const librelaneDir = join(homedir(), "librelane");
             console.error(`Starting LibreLane flow for ${designName}...`);
             console.error(`Working directory: ${projectDir}`);
-            console.error(`This may take up to 10 minutes...`);
+            console.error(`This may take up to 30 minutes...`);
             const librelaneCmd = `nix-shell --run "librelane '${configFile}'"`;
             console.error(`Executing (in ${librelaneDir}): ${librelaneCmd}`);
             // Create a wrapper script to handle TTY issues
@@ -368,7 +389,7 @@ script -qe -c "nix-shell --run \\"librelane '${configFile}'\\"" /dev/null
             // Run the LibreLane command using the wrapper script
             console.error(`Starting LibreLane flow for ${designName}...`);
             console.error(`Working directory: ${librelaneDir}`);
-            console.error(`This may take up to 10 minutes...`);
+            console.error(`This may take up to 30 minutes...`);
             console.error(`Using wrapper script to handle TTY`);
             const { stdout, stderr } = await execAsyncWithTimeout(`"${wrapperPath}"`, {
                 cwd: librelaneDir,
@@ -377,8 +398,11 @@ script -qe -c "nix-shell --run \\"librelane '${configFile}'\\"" /dev/null
                     PATH: process.env.PATH + ":/usr/local/bin:/opt/homebrew/bin"
                 },
                 maxBuffer: 10 * 1024 * 1024, // 10MB buffer instead of default 1MB
-                timeout: 600000
-            }, 600000); // 10 minutes timeout
+                // No options.timeout here: Node's own exec() timeout only SIGTERMs
+                // the direct child (same blind spot as the old manual kill), so we
+                // rely solely on execAsyncWithTimeout's group-kill logic below.
+            }, 1800000); // 30 minutes — a full multi-file design (SERV: ~22 min
+            // end to end measured) needs real headroom over a toy single-module one.
             // Find the latest run directory
             const runsDir = join(projectDir, "runs");
             let latestRun = "";
@@ -718,7 +742,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "run_openlane",
-                description: "Run complete ASIC design flow using OpenLane (RTL to GDSII). This process can take up to 10 minutes. For multi-file designs, pass 'verilog_files' instead of 'verilog_code'.",
+                description: "Run complete ASIC design flow using OpenLane (RTL to GDSII). This process can take up to 30 minutes for larger multi-file designs. For multi-file designs, pass 'verilog_files' instead of 'verilog_code'.",
                 inputSchema: {
                     type: "object",
                     properties: {
@@ -920,7 +944,7 @@ async function main() {
     // Only log to stderr, never stdout (stdout is for JSON-RPC)
     console.error("Enhanced Yosys MCP Server running on stdio");
     console.error("Features: Synthesis, Simulation, OpenLane ASIC flow");
-    console.error("OpenLane timeout extended to 10 minutes");
+    console.error("OpenLane timeout extended to 30 minutes");
 }
 main().catch((error) => {
     console.error("Server failed to start:", error);
