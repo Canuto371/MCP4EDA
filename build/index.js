@@ -305,7 +305,9 @@ stat
             // Create OpenLane config
             const configContent = {
                 DESIGN_NAME: topModule,
-                VERILOG_FILES: verilogFiles.map(f => f.filename),
+                // Absolute paths: LibreLane resolves VERILOG_FILES relative to its
+                // own cwd (~/librelane), not relative to this config.json.
+                VERILOG_FILES: verilogFiles.map(f => join(projectDir, f.filename)),
                 CLOCK_PORT: clockPort,
                 CLOCK_PERIOD: clockPeriod,
                 // Additional OpenLane settings for better results
