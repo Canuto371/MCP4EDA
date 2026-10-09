@@ -1,0 +1,7 @@
+{
+  "design_name": "counter",
+  "verilog_code": "module counter (input wire clk, input wire rst, output reg [3:0] count);\n  always @(posedge clk) begin\n    if (rst)\n      count <= 4'd0;\n    else\n      count <= count + 1'b1;\n  end\nendmodule\n",
+  "clock_port": "clk",
+  "clock_period": 10,
+  "open_in_klayout": false
+}
