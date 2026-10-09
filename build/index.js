@@ -315,13 +315,15 @@ stat
                 VERILOG_FILES: verilogFiles.map(f => join(projectDir, f.filename)),
                 CLOCK_PORT: clockPort,
                 CLOCK_PERIOD: clockPeriod,
-                // Additional OpenLane settings for better results
-                FP_SIZING: "absolute",
-                DIE_AREA: "0 0 100 100",
-                FP_PDN_MULTILAYER: false,
-                QUIT_ON_TIMING_VIOLATIONS: false,
-                QUIT_ON_MAGIC_DRC: false,
-                QUIT_ON_LVS_ERROR: false,
+                // No FP_SIZING/DIE_AREA override: a fixed small absolute die (the
+                // previous "0 0 100 100" default) worked for a 4-bit counter but
+                // gave >1000% placement utilization on anything bigger, like SERV.
+                // Leaving FP_SIZING unset lets LibreLane auto-size the floorplan
+                // ("relative" sizing) from the design's own cell area, which scales
+                // to whatever design is passed in.
+                PDN_MULTILAYER: false,
+                ERROR_ON_MAGIC_DRC: false,
+                ERROR_ON_LVS_ERROR: false,
                 RUN_KLAYOUT_XOR: false,
                 RUN_KLAYOUT_DRC: false
             };
