@@ -10,8 +10,8 @@
 //   node scripts/test-tool.mjs run_openlane scripts/examples/counter.json
 //   echo '{"verilog_code":"...", "top_module":"x"}' | node scripts/test-tool.mjs synthesize_verilog -
 //
-// Default timeout is 900000ms (15 min), comfortably above the server's own
-// 10-minute internal timeout for run_openlane.
+// Default timeout is 2100000ms (35 min), comfortably above the server's own
+// 30-minute internal timeout for run_openlane.
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -29,7 +29,7 @@ if (!toolName || !argsSource) {
   process.exit(1);
 }
 
-const timeoutMs = timeoutArg ? Number(timeoutArg) : 900000;
+const timeoutMs = timeoutArg ? Number(timeoutArg) : 2100000;
 
 function readArgsJson(source) {
   const raw = source === "-" ? readFileSync(0, "utf8") : readFileSync(source, "utf8");
