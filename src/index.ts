@@ -63,6 +63,11 @@ async function execAsyncWithTimeout(command: string, options: any = {}, timeoutM
     const childProcess = exec(command, execOptions, (error, stdout, stderr) => {
       clearTimeout(timeout);
       if (error) {
+        // Node's exec callback discards stdout/stderr from the error object
+        // by default; attach them so callers can see what the command
+        // actually printed, not just "Command failed: ...".
+        (error as any).stdout = typeof stdout === 'string' ? stdout : stdout?.toString();
+        (error as any).stderr = typeof stderr === 'string' ? stderr : stderr?.toString();
         reject(error);
       } else {
         // Convert to string if needed (though with utf8 encoding it should already be string)
@@ -407,7 +412,10 @@ cd "${librelaneDir}"
 # Run LibreLane with script command to simulate TTY.
 # 'script' needs its command passed via -c as a single string (not as
 # trailing argv), otherwise it tries to parse "--run" as its own flag.
-script -qc "nix-shell --run \\"librelane '${configFile}'\\"" /dev/null
+# -e/--return makes 'script' exit with the wrapped command's own exit
+# code; without it, 'script' always exits 0 regardless of whether
+# librelane succeeded, silently masking failures.
+script -qe -c "nix-shell --run \\"librelane '${configFile}'\\"" /dev/null
 `;
 
       const wrapperPath = join(projectDir, 'run_librelane.sh');
@@ -486,9 +494,13 @@ script -qc "nix-shell --run \\"librelane '${configFile}'\\"" /dev/null
         gds_path: gdsFile,
         klayout_status: klayoutResult,
         command_used: librelaneCmd,
-        stdout: stdout.length > 2000 ? stdout.substring(0, 2000) + "...(truncated)" : stdout,
-        stderr: stderr.length > 2000 ? stderr.substring(0, 2000) + "...(truncated)" : stderr,
-        note: "LibreLane flow completed. Check the runs directory for detailed results."
+        // Tail, not head: the useful part of a long LibreLane log (the
+        // final stage, or the error) is at the end.
+        stdout: stdout.length > 8000 ? "(truncated)...\n" + stdout.slice(-8000) : stdout,
+        stderr: stderr.length > 8000 ? "(truncated)...\n" + stderr.slice(-8000) : stderr,
+        note: gdsFile
+          ? "LibreLane flow completed. Check the runs directory for detailed results."
+          : "LibreLane exited successfully but no GDS was found under runs/*/final/gds — the flow may have stopped at an earlier stage without erroring. Check 'stdout' for the last stage that ran."
       }, null, 2);
 
     } catch (error: any) {
@@ -496,9 +508,14 @@ script -qc "nix-shell --run \\"librelane '${configFile}'\\"" /dev/null
       const errorMessage = error.message || String(error);
       console.error(`LibreLane error: ${errorMessage}`);
 
+      const errStdout: string = error.stdout || "";
+      const errStderr: string = error.stderr || "";
+
       return JSON.stringify({
         success: false,
         error: errorMessage,
+        stdout: errStdout.length > 8000 ? "(truncated)...\n" + errStdout.slice(-8000) : errStdout,
+        stderr: errStderr.length > 8000 ? "(truncated)...\n" + errStderr.slice(-8000) : errStderr,
         note: "LibreLane flow failed. Make sure ~/librelane has a working nix-shell (run 'cd ~/librelane && nix-shell' manually once to confirm) and that 'librelane' is on PATH inside it."
       }, null, 2);
     }
